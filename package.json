@@ -1,0 +1,94 @@
+{
+  "name": "@algrith/styledwind",
+  "version": "0.1.0",
+  "description": "A Tailwind-native styled() utility for React and Next.js, born from twin.macro breaking under Next.js's Turbopack — plus a live dev-time invalid-class validator with an in-browser overlay.",
+  "type": "module",
+  "source": "src/styled.tsx",
+  "main": "dist/styled.cjs",
+  "module": "dist/styled.mjs",
+  "types": "dist/styled.d.ts",
+  "bin": {
+    "styledwind-watch": "./dist/watcher.cjs"
+  },
+  "files": [
+    "/LICENSE",
+    "/README.md",
+    "/dist",
+    "/package.json"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/styled.d.ts",
+      "import": "./dist/styled.mjs",
+      "require": "./dist/styled.cjs"
+    },
+    "./overlay": {
+      "types": "./dist/overlay.d.ts",
+      "import": "./dist/overlay.mjs",
+      "require": "./dist/overlay.cjs"
+    },
+    "./next": {
+      "types": "./dist/withStyledwindGuard.d.ts",
+      "import": "./dist/withStyledwindGuard.mjs",
+      "require": "./dist/withStyledwindGuard.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "directories": {
+    "example": "examples"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "next": ">=15",
+    "tailwindcss": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.0",
+    "chokidar": "^4.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "@types/ws": "^8.5.0",
+    "@types/react": "^18.0.0"
+  },
+  "keywords": [
+    "tailwind",
+    "tailwindcss",
+    "styled-components",
+    "css-in-js",
+    "styled",
+    "nextjs",
+    "turbopack",
+    "twin.macro alternative",
+    "react",
+    "tailwind-merge",
+    "dev-tools"
+  ],
+  "author": "Algrith LLC <algrithllc@gmail.com> (https://algrith-astongemmy.vercel.app)",
+  "license": "MIT",
+  "homepage": "https://github.com/algrith/styledwind",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/algrith/styledwind.git"
+  },
+  "bugs": {
+    "url": "https://github.com/algrith/styledwind/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
