@@ -25,9 +25,12 @@ runtime.
 - **`styled.div`, `styled.button`, `styled(Component)`** — works on any
   intrinsic HTML tag or any ref-forwarding React component (including
   third-party ones, e.g. Ant Design, MUI).
-- **Nested selectors** — `.child { ... }`, comma-separated selectors
-  (`.a, .b { ... }`), and `&`-compounding (`&.active { ... }`,
-  `&:hover { ... }`) resolve against the component's own root at runtime.
+- **Nested selectors** — `.child { ... }`, comma-separated selectors, and
+  `&`-compounding (`&.active { ... }`, `&:hover { ... }`) resolve against
+  the component’s root at runtime. Nested `tw` classes are applied to
+  matching DOM nodes after mount and **re-applied when React updates a
+  child’s `className`**, so compound selectors stay in sync with
+  state-driven classes.
 - **Override precedence that matches CSS** — a nested block declared after
   (or inside) its parent correctly wins any conflicting Tailwind class,
   instead of falling back to Tailwind's arbitrary internal stylesheet
@@ -48,10 +51,10 @@ runtime.
 ## Framework support
 
 | Feature                                  | Next.js | Vite / CRA / plain React |
-| ----------------------------------------- | :-----: | :-----------------------: |
-| `styled`, `tw`, `variants`                | ✅      | ✅                         |
-| Live validator + overlay (auto-wired)     | ✅      | —                          |
-| Live validator + overlay (manual script)  | ✅      | ✅                         |
+| ---------------------------------------- | :-----: | :----------------------: |
+| `styled`, `tw`, `variants`               |   ✅    |            ✅            |
+| Live validator + overlay (auto-wired)    |   ✅    |            —             |
+| Live validator + overlay (manual script) |   ✅    |            ✅            |
 
 The core `styled` API has no Next.js-specific code in it at all — it's
 plain React plus `clsx`/`tailwind-merge`, so it works the same way in any
@@ -101,9 +104,17 @@ export const Card = styled.div`
 `;
 ```
 
-Nested selectors are resolved against DOM elements rendered inside the
-component after mount, so `.step` and `&.done` above just need to exist as
-literal `className`s somewhere in `Card`'s children.
+Nested selectors run on the client after mount: matching nodes receive the
+nested `tw` classes via the DOM. If a child later changes `className` in
+React (for example adding `done`), nested rules that depend on those
+classes are applied again automatically.
+
+`.step` / `&.done` still need those class names present on elements under
+the styled root — Styledwind does not invent them; it only attaches the
+nested utilities when the selectors match.
+
+Nested classes are not present in server-rendered HTML; they appear after
+hydration.
 
 This works exactly the same whether `Card` is rendered inside a Next.js
 app, a Vite app, Create React App, Remix, or any other React 18+ setup —
@@ -230,29 +241,35 @@ skipped.
 
 ### Config options
 
-| Option     | Env var (standalone CLI)     | Default        | Description                                                                |
-| ---------- | ------------------------------ | -------------- | --------------------------------------------------------------------------- |
-| `entryCss` | `STYLEDWIND_ENTRY_CSS`         | auto-detected  | Path to your Tailwind entry CSS, relative to the project root.              |
-| `port`     | `STYLEDWIND_GUARD_PORT`        | `47821`        | WebSocket port. Must match between the watcher and `<StyledwindGuardOverlay port={...} />`. |
+| Option     | Env var (standalone CLI) | Default       | Description                                                                                 |
+| ---------- | ------------------------ | ------------- | ------------------------------------------------------------------------------------------- |
+| `entryCss` | `STYLEDWIND_ENTRY_CSS`   | auto-detected | Path to your Tailwind entry CSS, relative to the project root.                              |
+| `port`     | `STYLEDWIND_GUARD_PORT`  | `47821`       | WebSocket port. Must match between the watcher and `<StyledwindGuardOverlay port={...} />`. |
 
 ## API reference
 
-| Export                    | Import from                    | Description                                                     |
-| ------------------------- | -------------------------------- | ----------------------------------------------------------------- |
-| `styled`                  | `@algrith/styledwind`             | Tagged-template factory — `styled.div`, `styled(Component)`.    |
-| `tw`                      | `@algrith/styledwind`             | Merges Tailwind classes via `tailwind-merge`.                   |
-| `variants`                | `@algrith/styledwind`             | Prop-driven, scanner-safe class selection.                      |
-| `withStyledwindGuard`     | `@algrith/styledwind/next`        | Next.js config wrapper — spawns the dev-time watcher.           |
-| `StyledwindGuardOverlay`  | `@algrith/styledwind/overlay`     | Client component — renders the invalid-class overlay.           |
-| `styledwind-watch`        | CLI (via `npx` or a script)      | Standalone watcher process for non-Next.js setups.               |
+| Export                   | Import from                   | Description                                                  |
+| ------------------------ | ----------------------------- | ------------------------------------------------------------ |
+| `styled`                 | `@algrith/styledwind`         | Tagged-template factory — `styled.div`, `styled(Component)`. |
+| `tw`                     | `@algrith/styledwind`         | Merges Tailwind classes via `tailwind-merge`.                |
+| `variants`               | `@algrith/styledwind`         | Prop-driven, scanner-safe class selection.                   |
+| `withStyledwindGuard`    | `@algrith/styledwind/next`    | Next.js config wrapper — spawns the dev-time watcher.        |
+| `StyledwindGuardOverlay` | `@algrith/styledwind/overlay` | Client component — renders the invalid-class overlay.        |
+| `styledwind-watch`       | CLI (via `npx` or a script)   | Standalone watcher process for non-Next.js setups.           |
 
 ## Limitations
 
 - The validator only checks **statically-written** `tw\`...\`` calls.
   Anything containing `${...}` interpolation is skipped, since there's no
   literal string to check without evaluating the component at runtime.
-- Nested-selector styling is applied via `document.querySelectorAll`
-  after mount — it does not affect server-rendered HTML before hydration.
+- Nested-selector styling is applied on the client via
+  `document.querySelectorAll` after mount (and re-applied when the styled
+  subtree’s DOM / `class` attributes change). It does **not** affect
+  server-rendered HTML before hydration, so there can be a brief mismatch
+  until the client runs. Nested utilities are merged onto nodes with
+  `classList` alongside any React `className`. React remains the source of
+  truth for the classes you set in JSX; Styledwind only adds/removes the
+  nested utilities it owns.
 - The overlay is advisory, not blocking: your app keeps running and
   serving requests even while an invalid class is showing.
 

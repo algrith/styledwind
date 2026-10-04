@@ -1,4 +1,4 @@
-import React, { JSX, useEffect, useId, useRef } from 'react';
+import React, { JSX, useId, useLayoutEffect, useRef } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -177,9 +177,9 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
       const finalClassName = twMerge(clsx(rootClasses));
       const combinedClasses = twMerge(clsx(finalClassName, className));
 
-      useEffect(() => {
+      useLayoutEffect(() => {
         const root = rootRef.current;
-
+      
         if (!root) {
           if (nestedClasses.size > 0 && process.env.NODE_ENV !== 'production') {
             const name =
@@ -187,39 +187,87 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
                 ? Component
                 : (Component as any).displayName || (Component as any).name || 'Component';
             console.warn(
-              `styled(${name}): nested selectors were declared but the ref never attached to a DOM node. ` +
-                `Wrap ${name} in React.forwardRef and spread the received ref + rest props onto its root ` +
-                `element, or these nested styles will not apply.`
+              `styled(${name}): nested selectors were declared but the ref never attached to a DOM node.`
             );
           }
           return;
         }
-
+      
         if (nestedClasses.size === 0) return;
-
+      
         const rootSelector = `[${instanceAttr}]`;
-        const perElementClasses = new Map<Element, string[]>();
-
-        nestedClasses.forEach((classes, key) => {
-          const selector = key.split('&ROOT&').join(rootSelector);
-
-          document.querySelectorAll(selector).forEach((el) => {
-            perElementClasses.set(el, [...(perElementClasses.get(el) ?? []), ...classes]);
-          });
-        });
-
         const applied = new Map<Element, string[]>();
-
-        perElementClasses.forEach((classes, el) => {
-          const merged = twMerge(clsx(classes)).split(/\s+/).filter(Boolean);
-          el.classList.add(...merged);
-          applied.set(el, merged);
-        });
-
-        return () => {
-          applied.forEach((classes, el) => el.classList.remove(...classes));
+      
+        const applyNestedClasses = () => {
+          const perElementClasses = new Map<Element, string[]>();
+      
+          nestedClasses.forEach((classes, key) => {
+            const selector = key.split('&ROOT&').join(rootSelector);
+            document.querySelectorAll(selector).forEach((el) => {
+              perElementClasses.set(el, [
+                ...(perElementClasses.get(el) ?? []),
+                ...classes,
+              ]);
+            });
+          });
+      
+          // Drop classes on elements that no longer match
+          applied.forEach((classes, el) => {
+            if (!perElementClasses.has(el)) {
+              el.classList.remove(...classes);
+              applied.delete(el);
+            }
+          });
+      
+          perElementClasses.forEach((classes, el) => {
+            const merged = twMerge(clsx(classes)).split(/\s+/).filter(Boolean);
+            const prev = applied.get(el) ?? [];
+      
+            const prevSet = new Set(prev);
+            const nextSet = new Set(merged);
+      
+            const toRemove = prev.filter((c) => !nextSet.has(c));
+            const toAdd = merged.filter((c) => !prevSet.has(c));
+      
+            if (toRemove.length) el.classList.remove(...toRemove);
+            if (toAdd.length) el.classList.add(...toAdd);
+      
+            applied.set(el, merged);
+          });
         };
-      });
+      
+        const observer = new MutationObserver(() => {
+          // Re-apply only in response to external DOM changes (e.g. React className)
+          observer.disconnect();
+          try {
+            applyNestedClasses();
+          } finally {
+            observer.observe(root, {
+              subtree: true,
+              childList: true,
+              attributes: true,
+              attributeFilter: ['class'],
+            });
+          }
+        });
+      
+        applyNestedClasses();
+      
+        observer.observe(root, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          attributeFilter: ['class'],
+        });
+      
+        return () => {
+          observer.disconnect();
+          applied.forEach((classes, el) => {
+            el.classList.remove(...classes);
+          });
+          applied.clear();
+        };
+      }, [instanceAttr, Component]); // prefer a stable nestedClasses key if needed
 
       return (
         <>
