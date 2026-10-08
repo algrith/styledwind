@@ -38,7 +38,10 @@ runtime.
   including the root's own classes under an `&`-compound such as
   `&.open { ... }`, instead of falling back to Tailwind's arbitrary
   internal stylesheet order. The overridden class is restored as soon as
-  the nested block stops matching.
+  the nested block stops matching. This applies within one styled
+  component; when two different styled components both target the same
+  element with conflicting utilities, neither removes the other's classes
+  and Tailwind's stylesheet order decides, so they can't undo each other.
 - **`tw` template tag** — merges Tailwind classes via `tailwind-merge`,
   so conflicting utilities resolve predictably.
 - **`variants()` helper** — prop-driven class selection that keeps every
@@ -303,7 +306,12 @@ skipped.
   nested utilities it owns, and while a nested block matches it also holds
   off any of the element's own classes that conflict with it (per
   `tailwind-merge`), restoring them when the block stops matching.
-  Conflicts among an element's own classes are left alone.
+  Conflicts among an element's own classes are left alone, and so are
+  classes another styled component applied to the same element.
+- If something keeps undoing a styled component's nested classes (another
+  script fighting it over the same element), Styledwind stops re-applying
+  that component's nested classes after 500 updates in a second and warns
+  in development, rather than freezing the page.
 - Templates are CSS text, not JavaScript, so a `//` comment inside a
   `styled` template is read as part of the next selector, making it
   invalid. Styledwind skips that nested block (with a console warning in

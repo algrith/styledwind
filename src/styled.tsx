@@ -161,6 +161,26 @@ const resolveSelector = (stack: string[]) => {
 // Nested selectors already reported as invalid, so each warns only once.
 const warnedSelectors = new Set<string>();
 
+// Re-applies per styled instance per second before assuming two nested rules
+// are fighting over an element and stopping, rather than freezing the page.
+const MAX_APPLIES_PER_SECOND = 500;
+
+// Classes each styled instance has applied to an element. An instance never
+// treats another's classes as the element's own, so two components with
+// conflicting rules for one element can't keep undoing each other.
+const appliedByInstance = new WeakMap<Element, Map<string, string[]>>();
+
+const setInstanceClasses = (el: Element, instance: string, classes: string[] | null) => {
+  const byInstance = appliedByInstance.get(el) ?? new Map<string, string[]>();
+  if (classes) byInstance.set(instance, classes);
+  else byInstance.delete(instance);
+  appliedByInstance.set(el, byInstance);
+};
+
+const getForeignClasses = (el: Element, instance: string) => new Set(
+  [...(appliedByInstance.get(el) ?? new Map<string, string[]>())].flatMap(([key, classes]) => (key === instance ? [] : classes))
+);
+
 /** Core factory – works for both HTML tags and React components */
 const createStyled = (Component: AnyComponent): StyledFactory => {
   return (strings: TemplateStringsArray, ...values: any[]) => {
@@ -254,7 +274,9 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
           // their own classes we were holding off.
           applied.forEach((classes, el) => {
             if (!perElementClasses.has(el)) {
-              el.classList.remove(...classes);
+              const foreign = getForeignClasses(el, instanceAttr);
+              el.classList.remove(...classes.filter((c) => !foreign.has(c)));
+              setInstanceClasses(el, instanceAttr, null);
               applied.delete(el);
             }
           });
@@ -270,18 +292,20 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
             const merged = toList(twMerge(clsx(classes)));
             const prev = applied.get(el) ?? [];
             const prevSuppressed = suppressed.get(el) ?? [];
+            const foreign = getForeignClasses(el, instanceAttr);
 
-            // The element's own classes: what is on it now that we didn't add,
-            // plus what we took off. Only those that lose to a nested class are
-            // suppressed, so conflicts among its own classes are left alone.
-            const own = [...new Set([...Array.from(el.classList).filter((c) => !prev.includes(c)), ...prevSuppressed])];
+            // The element's own classes: what is on it now that neither we nor
+            // another styled instance added, plus what we took off. Only those
+            // that lose to a nested class are suppressed, so conflicts among its
+            // own classes, or with another instance's, are left alone.
+            const own = [...new Set([...Array.from(el.classList).filter((c) => !prev.includes(c) && !foreign.has(c)), ...prevSuppressed])];
             const ownMerged = new Set(toList(twMerge(clsx(own))));
             const winners = new Set(toList(twMerge(clsx(own, merged))));
             const overridden = own.filter((c) => ownMerged.has(c) && !winners.has(c));
 
             const nextSet = new Set(merged);
       
-            const toRemove = prev.filter((c) => !nextSet.has(c));
+            const toRemove = prev.filter((c) => !nextSet.has(c) && !foreign.has(c));
             // Check the live classList, not what was applied before: React may have
             // replaced the className since, wiping classes we still think are there.
             const toAdd = merged.filter((c) => !el.classList.contains(c));
@@ -293,13 +317,35 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
             if (toAdd.length) el.classList.add(...toAdd);
       
             applied.set(el, merged);
+            setInstanceClasses(el, instanceAttr, merged);
 
             if (overridden.length) suppressed.set(el, overridden);
             else suppressed.delete(el);
           });
         };
       
+        let burstStart = 0;
+        let burst = 0;
+
         const observer = new MutationObserver(() => {
+          const now = Date.now();
+          if (now - burstStart > 1000) {
+            burstStart = now;
+            burst = 0;
+          }
+
+          burst += 1;
+
+          if (burst > MAX_APPLIES_PER_SECOND) {
+            observer.disconnect();
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn(
+                `styled: stopped updating nested classes after ${MAX_APPLIES_PER_SECOND} changes in a second. Two nested rules are probably fighting over the same element.`
+              );
+            }
+            return;
+          }
+
           // Re-apply only in response to external DOM changes (e.g. React className)
           observer.disconnect();
           try {
@@ -326,7 +372,9 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
         return () => {
           observer.disconnect();
           applied.forEach((classes, el) => {
-            el.classList.remove(...classes);
+            const foreign = getForeignClasses(el, instanceAttr);
+            el.classList.remove(...classes.filter((c) => !foreign.has(c)));
+            setInstanceClasses(el, instanceAttr, null);
           });
           suppressed.forEach((classes, el) => {
             el.classList.add(...classes);
