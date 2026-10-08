@@ -177,6 +177,10 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
       const finalClassName = twMerge(clsx(rootClasses));
       const combinedClasses = twMerge(clsx(finalClassName, className));
 
+      // Content key so the effect re-applies when nested classes change —
+      // props-driven values, or an edited template arriving via Fast Refresh.
+      const nestedKey = JSON.stringify([...nestedClasses]);
+
       useLayoutEffect(() => {
         const root = rootRef.current;
       
@@ -223,11 +227,12 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
             const merged = twMerge(clsx(classes)).split(/\s+/).filter(Boolean);
             const prev = applied.get(el) ?? [];
       
-            const prevSet = new Set(prev);
             const nextSet = new Set(merged);
       
             const toRemove = prev.filter((c) => !nextSet.has(c));
-            const toAdd = merged.filter((c) => !prevSet.has(c));
+            // Check the live classList, not what was applied before: React may have
+            // replaced the className since, wiping classes we still think are there.
+            const toAdd = merged.filter((c) => !el.classList.contains(c));
       
             if (toRemove.length) el.classList.remove(...toRemove);
             if (toAdd.length) el.classList.add(...toAdd);
@@ -267,7 +272,7 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
           });
           applied.clear();
         };
-      }, [instanceAttr, Component]); // prefer a stable nestedClasses key if needed
+      }, [instanceAttr, Component, nestedKey]);
 
       return (
         <>
