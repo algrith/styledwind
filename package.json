@@ -1,6 +1,6 @@
 {
   "name": "@algrith/styledwind",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A Tailwind-native styled() utility for React and Next.js, born from twin.macro breaking under Next.js's Turbopack — plus a live dev-time invalid-class validator with an in-browser overlay.",
   "type": "module",
   "source": "src/styled.tsx",
