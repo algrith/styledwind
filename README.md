@@ -29,12 +29,16 @@ runtime.
   `&`-compounding (`&.active { ... }`, `&:hover { ... }`) resolve against
   the component’s root at runtime. Nested `tw` classes are applied to
   matching DOM nodes after mount and **re-applied when React updates a
-  child’s `className`**, so compound selectors stay in sync with
-  state-driven classes.
-- **Override precedence that matches CSS** — a nested block declared after
-  (or inside) its parent correctly wins any conflicting Tailwind class,
-  instead of falling back to Tailwind's arbitrary internal stylesheet
-  order.
+  `className`** (on a child or on the root itself), when prop-driven
+  nested values change, and when an edited template arrives through Fast
+  Refresh — so compound selectors stay in sync with state-driven classes
+  and style edits show up without a page reload.
+- **Override precedence that matches CSS** — when a nested block matches an
+  element, it wins any conflicting Tailwind class the element already has,
+  including the root's own classes under an `&`-compound such as
+  `&.open { ... }`, instead of falling back to Tailwind's arbitrary
+  internal stylesheet order. The overridden class is restored as soon as
+  the nested block stops matching.
 - **`tw` template tag** — merges Tailwind classes via `tailwind-merge`,
   so conflicting utilities resolve predictably.
 - **`variants()` helper** — prop-driven class selection that keeps every
@@ -113,6 +117,28 @@ classes are applied again automatically.
 the styled root — Styledwind does not invent them; it only attaches the
 nested utilities when the selectors match.
 
+The same applies to the root itself, so a state class can override the
+root's own utilities:
+
+```tsx
+export const Drawer = styled.aside`
+  ${tw`fixed inset-y-0 right-0 translate-x-full transition-transform`};
+
+  &.open {
+    ${tw`translate-x-0`};
+  }
+`;
+
+<Drawer className={isOpen ? 'open' : undefined} />;
+```
+
+While `.open` is present, `translate-x-full` is held off the element so
+`translate-x-0` wins; it comes back when `.open` is removed.
+
+Nested values that come from props (`${(props) => ...}` inside a nested
+block) are re-applied whenever they change, and so are edits to the
+template during development with Fast Refresh.
+
 Nested classes are not present in server-rendered HTML; they appear after
 hydration.
 
@@ -136,6 +162,11 @@ onto its root DOM node (the same requirement `styled-components` and
 `emotion` place on wrapped components). In development, `styledwind` warns
 in the console if a component with nested selectors never attaches a ref,
 so a silent styling failure doesn't go unnoticed.
+
+Styled components forward refs too. A `ref` passed to one — directly, or
+by a wrapper such as Ant Design's `Dropdown` or `Tooltip` attaching itself
+to its trigger — receives the root DOM node, alongside the ref Styledwind
+keeps for nested selectors, so neither replaces the other.
 
 ### Prop-driven variants
 
@@ -268,8 +299,16 @@ skipped.
   server-rendered HTML before hydration, so there can be a brief mismatch
   until the client runs. Nested utilities are merged onto nodes with
   `classList` alongside any React `className`. React remains the source of
-  truth for the classes you set in JSX; Styledwind only adds/removes the
-  nested utilities it owns.
+  truth for the classes you set in JSX; Styledwind adds and removes the
+  nested utilities it owns, and while a nested block matches it also holds
+  off any of the element's own classes that conflict with it (per
+  `tailwind-merge`), restoring them when the block stops matching.
+  Conflicts among an element's own classes are left alone.
+- Templates are CSS text, not JavaScript, so a `//` comment inside a
+  `styled` template is read as part of the next selector, making it
+  invalid. Styledwind skips that nested block (with a console warning in
+  development) rather than breaking the component, but its classes won't
+  apply. Keep comments above the `styled` call instead.
 - The overlay is advisory, not blocking: your app keeps running and
   serving requests even while an invalid class is showing.
 

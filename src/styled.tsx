@@ -1,4 +1,4 @@
-import React, { JSX, useId, useLayoutEffect, useRef } from 'react';
+import React, { JSX, useCallback, useId, useLayoutEffect, useRef } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -158,14 +158,27 @@ const resolveSelector = (stack: string[]) => {
   return chains.join(', ');
 };
 
+// Nested selectors already reported as invalid, so each warns only once.
+const warnedSelectors = new Set<string>();
+
 /** Core factory – works for both HTML tags and React components */
 const createStyled = (Component: AnyComponent): StyledFactory => {
   return (strings: TemplateStringsArray, ...values: any[]) => {
-    return function StyledComponent({ className, children, style, ...props }: any) {
+    // forwardRef so a ref passed to the styled component (e.g. by a Dropdown or
+    // Tooltip trigger) reaches the DOM node in React 18 as well as 19.
+    const StyledComponent = React.forwardRef<Element, any>(function StyledComponent({ className, children, style, ...props }, forwardedRef) {
       const uniqueId = useId().replace(/:/g, '');
       const generatedClassName = `styled-${uniqueId}`;
       const instanceAttr = useRef(`data-styled-instance-${uniqueId.toLowerCase()}`).current;
       const rootRef = useRef<Element | null>(null);
+
+      // Keep our own ref for nested selectors and still hand the node to any
+      // ref passed in, rather than letting one replace the other.
+      const setRootRef = useCallback((node: Element | null) => {
+        rootRef.current = node;
+        if (typeof forwardedRef === 'function') forwardedRef(node);
+        else if (forwardedRef) forwardedRef.current = node;
+      }, [forwardedRef]);
 
       const evaluatedValues = values.map((val) =>
         typeof val === 'function' ? val(props) : val
@@ -201,13 +214,35 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
       
         const rootSelector = `[${instanceAttr}]`;
         const applied = new Map<Element, string[]>();
+        // An element's own classes that a matching nested rule overrides (e.g. a
+        // root's `translate-x-full` under `&.open { translate-x-0 }`), held off
+        // the element until the rule stops matching.
+        const suppressed = new Map<Element, string[]>();
+
+        const toList = (classes: string) => classes.split(/\s+/).filter(Boolean);
       
         const applyNestedClasses = () => {
           const perElementClasses = new Map<Element, string[]>();
       
           nestedClasses.forEach((classes, key) => {
             const selector = key.split('&ROOT&').join(rootSelector);
-            document.querySelectorAll(selector).forEach((el) => {
+            let matches: NodeListOf<Element>;
+
+            // An invalid selector (e.g. one swallowing a `//` comment) is
+            // skipped rather than breaking the whole component.
+            try {
+              matches = document.querySelectorAll(selector);
+            } catch {
+              if (process.env.NODE_ENV !== 'production' && !warnedSelectors.has(key)) {
+                warnedSelectors.add(key);
+                console.warn(
+                  `styled: skipped invalid nested selector "${key.split('&ROOT&').join('&').trim()}". Templates are CSS text — keep comments above the styled call.`
+                );
+              }
+              return;
+            }
+
+            matches.forEach((el) => {
               perElementClasses.set(el, [
                 ...(perElementClasses.get(el) ?? []),
                 ...classes,
@@ -215,29 +250,52 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
             });
           });
       
-          // Drop classes on elements that no longer match
+          // Drop classes on elements that no longer match, and give back any of
+          // their own classes we were holding off.
           applied.forEach((classes, el) => {
             if (!perElementClasses.has(el)) {
               el.classList.remove(...classes);
               applied.delete(el);
             }
           });
+
+          suppressed.forEach((classes, el) => {
+            if (!perElementClasses.has(el)) {
+              el.classList.add(...classes);
+              suppressed.delete(el);
+            }
+          });
       
           perElementClasses.forEach((classes, el) => {
-            const merged = twMerge(clsx(classes)).split(/\s+/).filter(Boolean);
+            const merged = toList(twMerge(clsx(classes)));
             const prev = applied.get(el) ?? [];
-      
+            const prevSuppressed = suppressed.get(el) ?? [];
+
+            // The element's own classes: what is on it now that we didn't add,
+            // plus what we took off. Only those that lose to a nested class are
+            // suppressed, so conflicts among its own classes are left alone.
+            const own = [...new Set([...Array.from(el.classList).filter((c) => !prev.includes(c)), ...prevSuppressed])];
+            const ownMerged = new Set(toList(twMerge(clsx(own))));
+            const winners = new Set(toList(twMerge(clsx(own, merged))));
+            const overridden = own.filter((c) => ownMerged.has(c) && !winners.has(c));
+
             const nextSet = new Set(merged);
       
             const toRemove = prev.filter((c) => !nextSet.has(c));
             // Check the live classList, not what was applied before: React may have
             // replaced the className since, wiping classes we still think are there.
             const toAdd = merged.filter((c) => !el.classList.contains(c));
+            const toRestore = prevSuppressed.filter((c) => !overridden.includes(c));
       
             if (toRemove.length) el.classList.remove(...toRemove);
+            if (toRestore.length) el.classList.add(...toRestore);
+            if (overridden.length) el.classList.remove(...overridden);
             if (toAdd.length) el.classList.add(...toAdd);
       
             applied.set(el, merged);
+
+            if (overridden.length) suppressed.set(el, overridden);
+            else suppressed.delete(el);
           });
         };
       
@@ -270,7 +328,11 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
           applied.forEach((classes, el) => {
             el.classList.remove(...classes);
           });
+          suppressed.forEach((classes, el) => {
+            el.classList.add(...classes);
+          });
           applied.clear();
+          suppressed.clear();
         };
       }, [instanceAttr, Component, nestedKey]);
 
@@ -286,17 +348,19 @@ const createStyled = (Component: AnyComponent): StyledFactory => {
           {React.createElement(
             Component as React.ElementType,
             {
-              ref: rootRef,
+              ...props,
+              ref: setRootRef,
               [instanceAttr]: '',
               className: `${combinedClasses} ${hasDeclaration ? generatedClassName : ''}`.trim(),
               style,
-              ...props,
             },
             children
           )}
         </>
       );
-    };
+    });
+
+    return StyledComponent as unknown as React.FC<any>;
   };
 };
 
