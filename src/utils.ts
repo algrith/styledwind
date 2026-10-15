@@ -1,4 +1,4 @@
-import { isValidTailwindClass } from './validator';
+import { isValidTailwindClass, resetCompiler } from './validator';
 import { execSync } from 'child_process';
 import { WebSocket, Server } from 'ws';
 import { FSWatcher } from 'chokidar';
@@ -88,6 +88,7 @@ export class Logger {
 };
 
 export class Scanner extends Logger {
+  private files = new Set<string>();
   private clients: Set<WebSocket>;
 
   constructor(clients: Set<WebSocket>) {
@@ -113,7 +114,7 @@ export class Scanner extends Logger {
   };
   
   scanFile = async (filePath: string) => {
-    if (!this.isWatchableFileType(filePath)) return;
+    if (!this.isWatchableFileType(filePath) || !fs.existsSync(filePath)) return;
 
     const content = fs.readFileSync(filePath, 'utf-8');
     let foundInvalid: string | null = null;
@@ -147,9 +148,31 @@ export class Scanner extends Logger {
     this.broadcastStateToClientApp();
   };
   
+  // A failed scan is logged, not thrown, so it can't stop the queue or the watcher.
   enqueueScan = (filePath: string) => {
-    queue = queue.then(() => this.scanFile(filePath));
+    if (this.isWatchableFileType(filePath)) this.files.add(filePath);
+    queue = queue.then(() => this.scanFile(filePath)).catch((error) => console.error('styledwind: couldn’t check', filePath.replace(appRoot, ''), error));
     return queue;
+  };
+
+  // The theme changed: check every file again against the new one. Queued, so
+  // a scan already under way finishes against the theme it started with.
+  rescanAll = () => {
+    queue = queue.then(() => {
+      resetCompiler();
+      seenValidClasses.clear();
+    });
+
+    for (const filePath of this.files) this.enqueueScan(filePath);
+    return queue;
+  };
+
+  forget = (filePath: string) => {
+    this.files.delete(filePath);
+    if (!fileErrors.delete(filePath)) return;
+
+    if (fileErrors.size === 0) this.logSuccess();
+    this.broadcastStateToClientApp();
   };
   
   broadcastStateToClientApp = () => {

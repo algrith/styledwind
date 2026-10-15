@@ -1,4 +1,5 @@
 import { freeStalePort, Scanner, appRoot } from './utils';
+import { usesStylesheet } from './validator';
 import { DEFAULT_GUARD_PORT } from './constants';
 import { WebSocketServer, WebSocket } from 'ws';
 import chokidar from 'chokidar';
@@ -37,8 +38,11 @@ const watcher = chokidar.watch(appRoot, {
   ]
 });
 
-watcher.on('change', (filePath) => scanner.enqueueScan(filePath));
+// Editing the Tailwind entry CSS, or a stylesheet it imports, can add or
+// remove theme tokens, so every file is checked again.
+watcher.on('change', (filePath) => (usesStylesheet(filePath) ? scanner.rescanAll() : scanner.enqueueScan(filePath)));
 watcher.on('add', (filePath) => scanner.enqueueScan(filePath));
+watcher.on('unlink', (filePath) => scanner.forget(filePath));
 
 // Signal listener for watcher shutdown.
 process.on('SIGTERM', () => scanner.shutdown(watcher, wss));

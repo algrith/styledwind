@@ -273,6 +273,13 @@ full-screen overlay in the browser until it's fixed. Classes inside
 interpolated `${...}` expressions can't be statically checked and are
 skipped.
 
+Theme edits are picked up live too. Changing your entry CSS, or a
+stylesheet it `@import`s from your project, rechecks every file against
+the new theme, so a class built on a token you've just added stops being
+flagged, and one built on a token you've removed is flagged, without
+restarting the dev server. Relative `@import`s resolve from the entry
+file's folder.
+
 ### Config options
 
 | Option     | Env var (standalone CLI) | Default       | Description                                                                                 |

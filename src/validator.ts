@@ -1,6 +1,10 @@
 import { readFile, access } from 'fs/promises';
 import { compile } from 'tailwindcss';
+import { createRequire } from 'module';
 import path from 'path';
+
+// Works in both builds; a bare require doesn't exist in the ESM one.
+const resolvePackage = createRequire(import.meta.url);
 
 // Common locations across App Router / Pages Router / non-Next setups.
 // Checked in order; first one that exists wins. A consumer with an
@@ -34,11 +38,16 @@ const resolveEntryCssPath = async (): Promise<string> => {
   );
 };
 
+// The project's own stylesheets the compiler has read: the entry file and
+// anything it imports. Editing one changes the theme, so classes checked
+// against the old one have to be checked again.
+const stylesheets = new Set<string>();
+
 const loadStylesheet = async (id: string, base: string) => {
   let filePath: string;
 
   if (id === 'tailwindcss' || id.startsWith('tailwindcss/')) {
-    const pkgJsonPath = require.resolve('tailwindcss/package.json');
+    const pkgJsonPath = resolvePackage.resolve('tailwindcss/package.json');
     const pkgRoot = path.dirname(pkgJsonPath);
     filePath =
       id === 'tailwindcss'
@@ -46,6 +55,7 @@ const loadStylesheet = async (id: string, base: string) => {
         : path.join(pkgRoot, id.replace('tailwindcss/', ''));
   } else {
     filePath = path.resolve(base, id);
+    stylesheets.add(filePath);
   }
 
   const content = await readFile(filePath, 'utf-8');
@@ -57,8 +67,15 @@ let compilerPromise: Promise<Awaited<ReturnType<typeof compile>>> | null = null;
 const getCompiler = async () => {
   if (!compilerPromise) {
     const entryPath = await resolveEntryCssPath();
+    stylesheets.add(entryPath);
     const entryCss = await readFile(entryPath, 'utf-8');
-    compilerPromise = compile(entryCss, { loadStylesheet });
+
+    // Relative @imports resolve from the entry file's folder. A failed compile
+    // (a typo mid-edit, a missing import) isn't kept, so the next edit retries.
+    compilerPromise = compile(entryCss, { base: path.dirname(entryPath), loadStylesheet }).catch((error) => {
+      compilerPromise = null;
+      throw error;
+    });
   }
   return compilerPromise;
 };
@@ -91,4 +108,14 @@ export const isValidTailwindClass = async (className: string): Promise<boolean> 
   }
 
   return valid;
+};
+
+export const usesStylesheet = (filePath: string) => stylesheets.has(path.resolve(filePath));
+
+// Forgets the compiled theme and every class confirmed against it, so the
+// next check compiles the stylesheets afresh.
+export const resetCompiler = () => {
+  compilerPromise = null;
+  knownValid.length = 0;
+  runningLength = null;
 };
